@@ -27,7 +27,7 @@ version = memoize;
 
 //version = Issue_8038_Fixed
 
-final class CallerInformation{
+struct CallerInformation{
     this(size_t line, string file){
         _line = line;
         _file = file;
@@ -101,29 +101,27 @@ final class CallerInformation{
         return Input!R(range, position, line);
     }
 
-// Result
-    struct Result(R, T){
+// Context
+    struct Context(R){
         public{
             bool match;
-            T value;
             Input!R rest;
             Error error;
 
-            void opAssign(U)(Result!(R, U) rhs)if(isAssignable!(T, U)){
+            void opAssign(Result rhs){
                 match = rhs.match;
-                value = rhs.value;
                 rest = rhs.rest;
                 error = rhs.error;
             }
 
             bool opEquals(Result lhs){
-                return match == lhs.match && value == lhs.value && rest == lhs.rest && error == lhs.error;
+                return match == lhs.match && rest == lhs.rest && error == lhs.error;
             }
         }
     }
 
-    Result!(R, T) result(R, T)(bool match, T value, Input!R rest, Error error){
-        return Result!(R, T)(match, value, rest, error);
+    Context!R makeContext(R)(bool match, Input!R rest, Error error){
+        return Result!R(match, value, rest, error);
     }
 
 struct Error{
@@ -147,8 +145,9 @@ struct Error{
         template success(){
             struct impl{
                 alias None ResultType;
-                static Result!(R, ResultType) parse(R)(Input!R input, ref memo_t memo, in CallerInformation info){
-                    return result(true, None.init, input, Error.init);
+                static None parse(R)(ref Context!R input, ref memo_t memo, in CallerInformation info){
+                    input.match = true;
+                    return None.init;
                 }
             }
             alias combinateMemoize!impl success;
@@ -158,8 +157,9 @@ struct Error{
         template failure(){
             struct impl{
                 alias None ResultType;
-                static Result!(R, ResultType) parse(R)(Input!R input, ref memo_t memo, in CallerInformation info){
-                    return result(false, None.init, Input!R.init, Error.init);
+                static None parse(R)(ref Context!R input, ref memo_t memo, in CallerInformation info){
+                    input.match = false;
+                    return None.init;
                 }
             }
             alias combinateMemoize!impl failure;
@@ -168,20 +168,16 @@ struct Error{
     // parseString
         template parseString(string str) if(str.length > 0){
             struct impl{
-                alias string ResultType;
-                static Result!(R, ResultType) parse(R)(Input!R ainput, ref memo_t memo, in CallerInformation info){
-                    auto input = ainput;
+                static string parse(R)(ref Context!R input, ref memo_t memo, in CallerInformation info){
                     enum breadth = countBreadth(str);
                     enum convertedString = staticConvertString!(str, R);
-                    typeof(return) result;
                     static if(isSomeString!R){
                         if(input.range.length >= convertedString.length && convertedString == input.range[0..convertedString.length]){
-                            result.match = true;
-                            result.value = str;
-                            result.rest.range = input.range[convertedString.length..$];
-                            result.rest.position = input.position + breadth.width;
-                            result.rest.line = input.line + breadth.line;
-                            return result;
+                            input.match = true;
+                            input.rest.range = input.range[convertedString.length..$];
+                            input.rest.position = input.position + breadth.width;
+                            input.rest.line = input.line + breadth.line;
+                            return str;
                         }
                     }else{
                         foreach(c; convertedString){
@@ -191,16 +187,14 @@ struct Error{
                                 input.range.popFront;
                             }
                         }
-                        result.match = true;
-                        result.value = str;
-                        result.rest.range = input.range;
-                        result.rest.position = input.position + breadth.width;
-                        result.rest.line = input.line + breadth.line;
-                        return result;
+                        input.match = true;
+                        input.rest.position += breadth.width;
+                        input.rest.line += breadth.line;
+                        return str;
                     }
                 Lerror:
-                    result.error = Error('"' ~ str ~ '"', input.line);
-                    return result;
+                    input.error = Error('"' ~ str ~ '"', input.line);
+                    return null;
                 }
             }
             alias combinateMemoize!impl parseString;
@@ -247,7 +241,7 @@ struct Error{
 
             struct impl{
                 alias string ResultType;
-                static Result!(R, ResultType) parse(R)(Input!R _input, ref memo_t memo, in CallerInformation info){
+                static void parse(R)(ref Context!R _input, ref memo_t memo, in CallerInformation info){
                     auto input = _input;
                     typeof(return) result;
                     static if(isSomeString!R){
@@ -319,7 +313,7 @@ struct Error{
         template parseEscapeSequence(){
             struct impl{
                 alias string ResultType;
-                static Result!(R, ResultType) parse(R)(Input!R input, ref memo_t memo, in CallerInformation info){
+                static void parse(R)(ref Context!R input, ref memo_t memo, in CallerInformation info){
                     typeof(return) result;
                     static if(isSomeString!R){
                         if(input.range[0] == '\\'){
@@ -455,7 +449,7 @@ struct Error{
         template parseSpace(){
             struct impl{
                 alias string ResultType;
-                static Result!(R, ResultType) parse(R)(Input!R input, ref memo_t memo, in CallerInformation info){
+                static void parse(R)(ref Context!R input, ref memo_t memo, in CallerInformation info){
                     typeof(return) result;
                     static if(isSomeString!R){
                         if(input.range.length > 0 && (input.range[0] == ' ' || input.range[0] == '\n' || input.range[0] == '\t' || input.range[0] == '\r' || input.range[0] == '\f')){
@@ -512,7 +506,7 @@ struct Error{
         template parseEOF(){
             struct impl{
                 alias None ResultType;
-                static Result!(R, ResultType) parse(R)(Input!R input, ref memo_t memo, in CallerInformation info){
+                static void parse(R)(ref Context!R input, ref memo_t memo, in CallerInformation info){
                     typeof(return) result;
                     if(input.range.empty){
                         result.match = true;
@@ -551,7 +545,7 @@ struct Error{
         template getLine(){
             struct impl{
                 alias size_t ResultType;
-                static Result!(R, ResultType) parse(R)(Input!R input, ref memo_t memo, in CallerInformation info){
+                static void parse(R)(ref Context!R input, ref memo_t memo, in CallerInformation info){
                     return result(true, input.line, input, Error.init);
                 }
             }
@@ -576,7 +570,7 @@ struct Error{
         template getCallerLine(){
             struct impl{
                 alias size_t ResultType;
-                static Result!(R, ResultType) parse(R)(Input!R input, ref memo_t memo, in CallerInformation info){
+                static void parse(R)(ref Context!R input, ref memo_t memo, in CallerInformation info){
                     return result(true, info.line, input, Error.init);
                 }
             }
@@ -601,7 +595,7 @@ struct Error{
         template getCallerFile(){
             struct impl{
                 alias string ResultType;
-                static Result!(R, ResultType) parse(R)(Input!R input, ref memo_t memo, in CallerInformation info){
+                static void parse(R)(ref Context!R input, ref memo_t memo, in CallerInformation info){
                     return result(true, info.file, input, Error.init);
                 }
             }
@@ -624,7 +618,7 @@ struct Error{
 
             template combinateMemoize(alias parser){
                 alias ParserType!parser ResultType;
-                Result!(R, ResultType) parse(R)(Input!R input, ref memo_t memo, in CallerInformation info){
+                Result!(R, ResultType) parse(R)(ref Context!R input, ref memo_t memo, in CallerInformation info){
                     auto memo0 = parser.mangleof in memo;
                     if(memo0){
                         auto memo1 = input.position in *memo0;
@@ -649,7 +643,7 @@ struct Error{
             static if(isTuple!(ParserType!parser) && ParserType!parser.Types.length == 1){
                 struct impl{
                     alias ParserType!parser.Types[0] ResultType;
-                    static Result!(R, ResultType) parse(R)(Input!R input, ref memo_t memo, in CallerInformation info){
+                    static void parse(R)(ref Context!R input, ref memo_t memo, in CallerInformation info){
                         typeof(return) result;
                         auto r = parser.parse(input, memo, info);
                         result.match = r.match;
@@ -762,7 +756,7 @@ struct Error{
         template combinateSequenceImpl(parsers...){
             struct impl{
                 alias CombinateSequenceImplType!(parsers) ResultType;
-                static Result!(R, ResultType) parse(R)(Input!R input, ref memo_t memo, in CallerInformation info){
+                static void parse(R)(ref Context!R input, ref memo_t memo, in CallerInformation info){
                     typeof(return) result;
                     static if(parsers.length == 1){
                         auto r = parsers[0].parse(input, memo, info);
@@ -852,7 +846,7 @@ struct Error{
         template combinateChoice(parsers...){
             struct impl{
                 alias CommonParserType!(parsers) ResultType;
-                static Result!(R, ResultType) parse(R)(Input!R input, ref memo_t memo, in CallerInformation info){
+                static void parse(R)(ref Context!R input, ref memo_t memo, in CallerInformation info){
                     static assert(parsers.length > 0);
                     static if(parsers.length == 1){
                         return parsers[0].parse(input, memo, info);
@@ -911,7 +905,7 @@ struct Error{
         template combinateMore(int n, alias parser, alias sep){
             struct impl{
                 alias ParserType!(parser)[] ResultType;
-                static Result!(R, ResultType) parse(R)(Input!R input, ref memo_t memo, in CallerInformation info){
+                static void parse(R)(ref Context!R input, ref memo_t memo, in CallerInformation info){
                     typeof(return) result;
                     Input!R rest = input;
                     while(true){
@@ -992,7 +986,7 @@ struct Error{
         template combinateOption(alias parser){
             struct impl{
                 alias Option!(ParserType!parser) ResultType;
-                static Result!(R, ResultType) parse(R)(Input!R input, ref memo_t memo, in CallerInformation info){
+                static void parse(R)(ref Context!R input, ref memo_t memo, in CallerInformation info){
                     typeof(return) result;
                     result.match = true;
                     auto r = parser.parse(input.save, memo, info);
@@ -1034,7 +1028,7 @@ struct Error{
         template combinateNone(alias parser){
             struct impl{
                 alias None ResultType;
-                static Result!(R, ResultType) parse(R)(Input!R input, ref memo_t memo, in CallerInformation info){
+                static void parse(R)(ref Context!R input, ref memo_t memo, in CallerInformation info){
                     typeof(return) result;
                     auto r = parser.parse(input, memo, info);
                     if(r.match){
@@ -1081,7 +1075,7 @@ struct Error{
         template combinateAndPred(alias parser){
             struct impl{
                 alias None ResultType;
-                static Result!(R, ResultType) parse(R)(Input!R input, ref memo_t memo, in CallerInformation info){
+                static void parse(R)(ref Context!R input, ref memo_t memo, in CallerInformation info){
                     typeof(return) result;
                     result.rest = input;
                     auto r = parser.parse(input, memo, info);
@@ -1132,7 +1126,7 @@ struct Error{
         template combinateNotPred(alias parser){
             struct impl{
                 alias None ResultType;
-                static Result!(R, ResultType) parse(R)(Input!R input, ref memo_t memo, in CallerInformation info){
+                static void parse(R)(ref Context!R input, ref memo_t memo, in CallerInformation info){
                     typeof(return) result;
                     result.rest = input;
                     result.match = !parser.parse(input.save, memo, info).match;
@@ -1181,7 +1175,7 @@ struct Error{
         template combinateConvert(alias parser, alias converter){
             struct impl{
                 alias CombinateConvertType!(converter, ParserType!parser) ResultType;
-                static Result!(R, ResultType) parse(R)(Input!R input, ref memo_t memo, in CallerInformation info){
+                static void parse(R)(ref Context!R input, ref memo_t memo, in CallerInformation info){
                     typeof(return) result;
                     auto r = parser.parse(input, memo, info);
                     if(r.match){
@@ -1232,7 +1226,7 @@ struct Error{
         template combinateCheck(alias parser, alias checker){
             struct impl{
                 alias ParserType!parser ResultType;
-                static Result!(R, ResultType) parse(R)(Input!R input, ref memo_t memo, in CallerInformation info){
+                static void parse(R)(ref Context!R input, ref memo_t memo, in CallerInformation info){
                     typeof(return) result;
                     auto r = parser.parse(input, memo, info);
                     if(r.match){
@@ -1604,7 +1598,7 @@ bool isMatch(alias fun)(string src){
     // func
         template func(){
             alias string ResultType;
-            Result!(R, string) parse(R)(Input!R input, ref memo_t memo, in CallerInformation info){
+            Result!(R, string) parse(R)(ref Context!R input, ref memo_t memo, in CallerInformation info){
                 return combinateConvert!(
                     combinateSequence!(
                         combinateOption!(
@@ -2486,7 +2480,7 @@ bool isMatch(alias fun)(string src){
                     =>
                         "template " ~ name ~ "(){"
                             "alias " ~ type ~ " ResultType;"
-                            "Result!(R, ResultType) parse(R)(Input!R input, ref memo_t memo, in CallerInformation info){"
+                            "Result!(R, ResultType) parse(R)(ref Context!R input, ref memo_t memo, in CallerInformation info){"
                                 "return "~choiceExp~".parse(input, memo, info);"
                             "}"
                         "}"
@@ -2505,7 +2499,7 @@ bool isMatch(alias fun)(string src){
                         result.value ==
                         "template hoge(){"
                             "alias bool ResultType;"
-                            "Result!(R, ResultType) parse(R)(Input!R input, ref memo_t memo, in CallerInformation info){"
+                            "Result!(R, ResultType) parse(R)(ref Context!R input, ref memo_t memo, in CallerInformation info){"
                                 "return combinateConvert!("
                                     "combinateSequence!("
                                         "combinateNone!("
@@ -2529,7 +2523,7 @@ bool isMatch(alias fun)(string src){
                         result.value ==
                         "template recursive(){"
                             "alias None ResultType;"
-                            "Result!(R, ResultType) parse(R)(Input!R input, ref memo_t memo, in CallerInformation info){"
+                            "Result!(R, ResultType) parse(R)(ref Context!R input, ref memo_t memo, in CallerInformation info){"
                                 "return combinateSequence!("
                                     " #line " ~ (__LINE__ - 9).to!string() ~ "\nA!(),"
                                     "parseEOF!()"
@@ -2547,7 +2541,7 @@ bool isMatch(alias fun)(string src){
     // defs
         template defs(){
             alias string ResultType;
-            Result!(R, string) parse(R)(Input!R input, ref memo_t memo, in CallerInformation info){
+            Result!(R, string) parse(R)(ref Context!R input, ref memo_t memo, in CallerInformation info){
                 return combinateConvert!(
                     combinateSequence!(
                         parseSpaces!(),
@@ -2576,7 +2570,7 @@ bool isMatch(alias fun)(string src){
                     result.value ==
                     "template hoge(){"
                         "alias bool ResultType;"
-                        "Result!(R, ResultType) parse(R)(Input!R input, ref memo_t memo, in CallerInformation info){"
+                        "Result!(R, ResultType) parse(R)(ref Context!R input, ref memo_t memo, in CallerInformation info){"
                             "return combinateConvert!("
                                 "combinateSequence!("
                                     "combinateNone!("
@@ -2592,7 +2586,7 @@ bool isMatch(alias fun)(string src){
                     "}"
                     "template hoge2(){"
                         "alias Tuple!piyo ResultType;"
-                        "Result!(R, ResultType) parse(R)(Input!R input, ref memo_t memo, in CallerInformation info){"
+                        "Result!(R, ResultType) parse(R)(ref Context!R input, ref memo_t memo, in CallerInformation info){"
                             "return combinateConvert!("
                                 "combinateMore0!("
                                     " #line " ~ (__LINE__ - 27).to!string() ~ "\nhoge!()"
@@ -2665,7 +2659,7 @@ private:
 
 version(unittest) template TestParser(T){
     alias T ResultType;
-    Result!(R, ResultType) parse(R)(Input!R input, ref memo_t memo, in CallerInformation info){
+    Result!(R, ResultType) parse(R)(ref Context!R input, ref memo_t memo, in CallerInformation info){
         typeof(return) result;
         return result;
     }
